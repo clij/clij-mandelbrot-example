@@ -8,18 +8,23 @@ import net.haesleinhuepf.clij.CLIJ;
 import net.haesleinhuepf.clij.MandelbrotDrawer;
 import net.haesleinhuepf.clij.clearcl.ClearCLBuffer;
 import net.haesleinhuepf.clij.coremem.enums.NativeTypeEnum;
+import net.haesleinhuepf.imglib2.ParallelMandelbrotDrawer;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgFactory;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
-import net.imglib2.type.numeric.integer.UnsignedShortType;
 
 public class MandelbrotDemo {
 
+    final static int width = 600;
+    final static int height = 400;
 
-    final static ImagePlus cpuImageMemory = NewImage.createShortImage("cpum", 400, 400, 1, NewImage.FILL_BLACK);
-    final static ImagePlus gpuImageMemory = NewImage.createShortImage("gpum", 400, 400, 1, NewImage.FILL_BLACK);
+    final static ImagePlus cpuSingleThreadedImageMemory = NewImage.createShortImage("cpum", width, height, 1, NewImage.FILL_BLACK);
+    final static ImagePlus cpuMultiThreadedImageMemory = NewImage.createShortImage("cpumm", width, height, 1, NewImage.FILL_BLACK);
+    final static ImagePlus gpuImageMemory = NewImage.createShortImage("gpum", width, height, 1, NewImage.FILL_BLACK);
 
     static long cpuCount = 0;
+    static long cpuMultiThreadedCount = 0;
     static long clijCount = 0;
 
     static Object lock = new Object();
@@ -31,17 +36,26 @@ public class MandelbrotDemo {
         final float deltaScale = 1.001f;
         final float centerOffsetX = 1.402f;
         final int maxIterations = 255;
-        final int[] dimensions = new int[] { 400, 400 };
+        final int[] dimensions = new int[] { width, height };
 
-        // allocate memory for imglib2
+        int numberOfMultThreadingCores = Runtime.getRuntime().availableProcessors() - 1;
+
+        // allocate memory for single threaded CPU version
         final Img<UnsignedByteType> img = new ArrayImgFactory<>( new UnsignedByteType() ).create( dimensions );
         net.haesleinhuepf.imglib2.MandelbrotDrawer mandelbrotDrawer = new net.haesleinhuepf.imglib2.MandelbrotDrawer(new UnsignedByteType(), maxIterations);
 
-        // allocate memory for CLIJ
+        // allocate memory for single threaded CPU version
+        final Img<UnsignedByteType> img2 = new ArrayImgFactory<>( new UnsignedByteType() ).create( dimensions );
+        ParallelMandelbrotDrawer[] parallelMandelbrotDrawers = new ParallelMandelbrotDrawer[numberOfMultThreadingCores];
+        for (int i = 0; i < parallelMandelbrotDrawers.length; i++) {
+            parallelMandelbrotDrawers[i] = new ParallelMandelbrotDrawer(new UnsignedByteType(), maxIterations, i, parallelMandelbrotDrawers.length);
+        }
+
+        // allocate memory for GPU version using CLIJ
         final CLIJ clij = CLIJ.getInstance();
         final ClearCLBuffer clMandelbrot = clij.create(new long[]{dimensions[0], dimensions[1]}, NativeTypeEnum.UnsignedByte);
 
-
+        // single thread
         new Thread() {
             @Override
             public void run() {
@@ -52,7 +66,7 @@ public class MandelbrotDemo {
                     ImagePlus imglibMandelbrot = mandelbrotDrawer.drawMandelbrot(img, scale, offsetX - centerOffsetX, offsetY);
 
                     synchronized (lock) {
-                        cpuImageMemory.setProcessor(imglibMandelbrot.getProcessor());
+                        cpuSingleThreadedImageMemory.setProcessor(imglibMandelbrot.getProcessor());
                     }
                     cpuCount++;
 
@@ -62,6 +76,49 @@ public class MandelbrotDemo {
                 }
             }
         }.start();
+
+        // multi thread
+        new Thread() {
+            @Override
+            public void run() {
+                float[] scale = {0.005f};
+                float[] offsetX = {-1f};
+                float[] offsetY = {-1f};
+                while(true) {
+                    Thread[] threads = new Thread[parallelMandelbrotDrawers.length];
+                    for (int i = 0; i < parallelMandelbrotDrawers.length; i++) {
+                        final int ii = i;
+                        threads[i] = new Thread() {
+                            @Override
+                            public void run() {
+                                parallelMandelbrotDrawers[ii].drawMandelbrot(img2, scale[0], offsetX[0] - centerOffsetX, offsetY[0]);
+                            }
+                        };
+                        threads[i].start();
+                    }
+                    for (int i = 0; i < parallelMandelbrotDrawers.length; i++) {
+                        try {
+                            threads[i].join();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+
+                    ImagePlus imglibMandelbrot = ImageJFunctions.wrap(img, "img");
+
+                    synchronized (lock) {
+                        cpuMultiThreadedImageMemory.setProcessor(imglibMandelbrot.getProcessor());
+                    }
+                    cpuMultiThreadedCount++;
+
+                    scale[0] = scale[0] / deltaScale;
+                    offsetX[0] = offsetX[0] / deltaScale;
+                    offsetY[0] = offsetY[0] / deltaScale;
+                }
+            }
+        }.start();
+
+
 
         new Thread() {
             @Override
@@ -86,19 +143,26 @@ public class MandelbrotDemo {
         }.start();
 
         // visualisation
-        final ImagePlus cpuImageDisplay = NewImage.createByteImage("CPU", 400, 400, 1, NewImage.FILL_BLACK);
-        cpuImageDisplay.show();
-        final ImagePlus gpuImageDisplay = NewImage.createByteImage("GPU", 400, 400, 1, NewImage.FILL_BLACK);
+        final ImagePlus cpuSingleThreadedImageDisplay = NewImage.createByteImage("CPU single threaded", width, height, 1, NewImage.FILL_BLACK);
+        cpuSingleThreadedImageDisplay.show();
+        final ImagePlus cpuMultiThreadedImageDisplay = NewImage.createByteImage("CPU multi threaded", width, height, 1, NewImage.FILL_BLACK);
+        cpuMultiThreadedImageDisplay.show();
+        final ImagePlus gpuImageDisplay = NewImage.createByteImage("GPU", width, height, 1, NewImage.FILL_BLACK);
         gpuImageDisplay.show();
 
         while(true) {
-            cpuImageDisplay.setTitle("CPU: " + cpuCount);
-            gpuImageDisplay.setTitle("GPU: " + clijCount);
+            cpuSingleThreadedImageDisplay.setTitle("CPU (1 core): " + cpuCount);
+            cpuMultiThreadedImageDisplay.setTitle("CPU (" + numberOfMultThreadingCores + " cores): " + cpuMultiThreadedCount);
+            gpuImageDisplay.setTitle("GPU (" + clij.getClearCLContext().getDevice().getNumberOfComputeUnits() + " cores): " + clijCount);
 
             synchronized (lock) { // ensure that images are not overwritten while GUI refresh
-                cpuImageDisplay.setProcessor(cpuImageMemory.getProcessor());
-                IJ.run(cpuImageDisplay, "Fire", "");
-                cpuImageDisplay.setDisplayRange(0, maxIterations);
+                cpuSingleThreadedImageDisplay.setProcessor(cpuSingleThreadedImageMemory.getProcessor());
+                IJ.run(cpuSingleThreadedImageDisplay, "Fire", "");
+                cpuSingleThreadedImageDisplay.setDisplayRange(0, maxIterations);
+
+                cpuMultiThreadedImageDisplay.setProcessor(cpuMultiThreadedImageMemory.getProcessor());
+                IJ.run(cpuMultiThreadedImageDisplay, "Fire", "");
+                cpuMultiThreadedImageDisplay.setDisplayRange(0, maxIterations);
 
                 gpuImageDisplay.setProcessor(gpuImageMemory.getProcessor());
                 IJ.run(gpuImageDisplay, "Fire", "");
