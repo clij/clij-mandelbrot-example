@@ -151,8 +151,8 @@ public class MandelbrotDemo {
         gpuImageDisplay.show();
 
         while(true) {
-            cpuSingleThreadedImageDisplay.setTitle("CPU (1 core): " + cpuCount);
-            cpuMultiThreadedImageDisplay.setTitle("CPU (" + numberOfMultThreadingCores + " cores): " + cpuMultiThreadedCount);
+            cpuSingleThreadedImageDisplay.setTitle("CPU (1 thread): " + cpuCount);
+            cpuMultiThreadedImageDisplay.setTitle("CPU (" + numberOfMultThreadingCores + " threads): " + cpuMultiThreadedCount);
             gpuImageDisplay.setTitle("GPU (" + clij.getClearCLContext().getDevice().getNumberOfComputeUnits() + " cores): " + clijCount);
 
             synchronized (lock) { // ensure that images are not overwritten while GUI refresh
