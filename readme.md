@@ -7,4 +7,6 @@ In order to compare both, open the pom.xml in your IDE and run the [main method]
 
 If you know faster implementations for drawing the Mandelbrot set, feel free to submit is a pull request! :-)
 
-[Back to clij documentation](https://clij.github.io/)
+[Back to CLIJ documentation](https://clij.github.io/)
+
+[Imprint](https://clij.github.io/imprint)
